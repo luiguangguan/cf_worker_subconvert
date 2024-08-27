@@ -2916,167 +2916,141 @@ init_modules_watch_stub();
 var yaml = require_js_yaml();
 var src_default = {
   async fetch(request, env) {
-    try{
-      const url = new URL(request.url);
-      const host = url.origin;
-      const frontendUrl = 'https://raw.githubusercontent.com/bulianglin/psub/main/frontend.html';
-      const SUB_BUCKET = env.SUB_BUCKET;
-      const kvtest = env.test;
-      let backend = env.BACKEND.replace(/(https?:\/\/[^/]+).*$/, "$1");
-      const subDir = "subscription";
-      const pathSegments = url.pathname.split("/").filter((segment) => segment.length > 0);
-      if (pathSegments.length === 0) {
-        const response = await fetch(frontendUrl);
-        if (response.status !== 200) {
-          let resp =Response('Failed to fetch frontend', { status: response.status });
-          await kvtest.put("v1",JSON.stringify(resp,null,2));
-          return resp;
-        }
-        const originalHtml = await response.text();
-        const modifiedHtml = originalHtml.replace(/https:\/\/bulianglin2023\.dev/, host);
-        let resp = new Response(modifiedHtml, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/html',
-          },
-        });
-        
-          await kvtest.put("v2",JSON.stringify(resp,null,2));
-          return resp;
+    const url = new URL(request.url);
+    const host = url.origin;
+    const frontendUrl = 'https://raw.githubusercontent.com/bulianglin/psub/main/frontend.html';
+    const SUB_BUCKET = env.SUB_BUCKET;
+    let backend = env.BACKEND.replace(/(https?:\/\/[^/]+).*$/, "$1");
+    const subDir = "subscription";
+    const pathSegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+    if (pathSegments.length === 0) {
+      const response = await fetch(frontendUrl);
+      if (response.status !== 200) {
+        return new Response('Failed to fetch frontend', { status: response.status });
+      }
+      const originalHtml = await response.text();
+      const modifiedHtml = originalHtml.replace(/https:\/\/bulianglin2023\.dev/, host);
+      return new Response(modifiedHtml, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html',
+        },
+      });
+    } else if (pathSegments[0] === subDir) {
+      const key = pathSegments[pathSegments.length - 1];
+      const object = await SUB_BUCKET.get(key);
+      const object_headers = await SUB_BUCKET.get(key + "_headers");
+      if (object === null)
+        return new Response("Not Found", { status: 404 });
+      if ("R2Bucket" === SUB_BUCKET.constructor.name) {
+        const headers = object_headers ? new Headers(await object_headers.json()) : new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
+        return new Response(object.body, { headers });
+      } else {
+        const headers = object_headers ? new Headers(JSON.parse(object_headers)) : new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
+        return new Response(object, { headers });
+      }
+    }
 
-      } else if (pathSegments[0] === subDir) {
-        const key = pathSegments[pathSegments.length - 1];
-        const object = await SUB_BUCKET.get(key);
-        const object_headers = await SUB_BUCKET.get(key + "_headers");
-        if (object === null){
-          let resp = new Response("Not Found", { status: 404 });
-          await kvtest.put("v3",JSON.stringify(resp,null,2));
-          return resp;
-        }
-        if ("R2Bucket" === SUB_BUCKET.constructor.name) {
-          const headers = object_headers ? new Headers(await object_headers.json()) : new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
-          let resp = new Response(object.body, { headers });
-          await kvtest.put("v4",JSON.stringify(resp,null,2));
-          return resp;
-        } else {
-          const headers = object_headers ? new Headers(JSON.parse(object_headers)) : new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
-          let resp = new Response(object, { headers });
-          await kvtest.put("v5",JSON.stringify(object,null,2));
-          await kvtest.put("v5req",request.url);
-          return resp;
+    const urlParam = url.searchParams.get("url");
+    if (!urlParam)
+      return new Response("Missing URL parameter", { status: 400 });
+    const backendParam = url.searchParams.get("bd");
+    if (backendParam && /^(https?:\/\/[^/]+)[.].+$/g.test(backendParam))
+      backend = backendParam.replace(/(https?:\/\/[^/]+).*$/, "$1");
+    const replacements = {};
+    const replacedURIs = [];
+    const keys = [];
+    if (urlParam.startsWith("proxies:")) {
+      const { format, data } = parseData(urlParam.replace(/\|/g, "\r\n"));
+      if ("yaml" === format) {
+        const key = generateRandomStr(11);
+        const replacedYAMLData = replaceYAML(data, replacements);
+        if (replacedYAMLData) {
+          await SUB_BUCKET.put(key, replacedYAMLData);
+          keys.push(key);
+          replacedURIs.push(`${host}/${subDir}/${key}`);
         }
       }
-
-      const urlParam = url.searchParams.get("url");
-      if (!urlParam)
-        return new Response("Missing URL parameter", { status: 400 });
-      const backendParam = url.searchParams.get("bd");
-      if (backendParam && /^(https?:\/\/[^/]+)[.].+$/g.test(backendParam))
-        backend = backendParam.replace(/(https?:\/\/[^/]+).*$/, "$1");
-      const replacements = {};
-      const replacedURIs = [];
-      const keys = [];
-      if (urlParam.startsWith("proxies:")) {
-        const { format, data } = parseData(urlParam.replace(/\|/g, "\r\n"));
-        if ("yaml" === format) {
-          const key = generateRandomStr(11);
-          const replacedYAMLData = replaceYAML(data, replacements);
+    } else {
+      const urlParts = urlParam.split("|").filter((part) => part.trim() !== "");
+      if (urlParts.length === 0)
+        return new Response("There are no valid links", { status: 400 });
+      let response, parsedObj;
+      for (const url2 of urlParts) {
+        const key = generateRandomStr(11);
+        if (url2.startsWith("https://") || url2.startsWith("http://")) {
+          response = await fetch(url2, {
+            method: request.method,
+            headers: request.headers,
+            redirect: 'follow', // https://developers.cloudflare.com/workers/runtime-apis/request#constructor
+          });
+          if (!response.ok)
+            continue;
+          const plaintextData = await response.text();
+          parsedObj = parseData(plaintextData);
+          await SUB_BUCKET.put(key + "_headers", JSON.stringify(Object.fromEntries(response.headers)));
+          keys.push(key);
+        } else {
+          parsedObj = parseData(url2);
+        }
+        if (/^(ssr?|vmess1?|trojan|vless|hysteria):\/\//.test(url2)) {
+          const newLink = replaceInUri(url2, replacements, false);
+          if (newLink)
+            replacedURIs.push(newLink);
+          continue;
+        } else if ("base64" === parsedObj.format) {
+          const links = parsedObj.data.split(/\r?\n/).filter((link) => link.trim() !== "");
+          const newLinks = [];
+          for (const link of links) {
+            const newLink = replaceInUri(link, replacements, false);
+            if (newLink)
+              newLinks.push(newLink);
+          }
+          const replacedBase64Data = btoa(newLinks.join("\r\n"));
+          if (replacedBase64Data) {
+            await SUB_BUCKET.put(key, replacedBase64Data);
+            keys.push(key);
+            replacedURIs.push(`${host}/${subDir}/${key}`);
+          }
+        } else if ("yaml" === parsedObj.format) {
+          const replacedYAMLData = replaceYAML(parsedObj.data, replacements);
           if (replacedYAMLData) {
             await SUB_BUCKET.put(key, replacedYAMLData);
             keys.push(key);
             replacedURIs.push(`${host}/${subDir}/${key}`);
           }
         }
-      } else {
-        const urlParts = urlParam.split("|").filter((part) => part.trim() !== "");
-        if (urlParts.length === 0)
-          return new Response("There are no valid links", { status: 400 });
-        let response, parsedObj;
-        for (const url2 of urlParts) {
-          const key = generateRandomStr(11);
-          if (url2.startsWith("https://") || url2.startsWith("http://")) {
-            response = await fetch(url2, {
-              method: request.method,
-              headers: request.headers,
-              redirect: 'follow', // https://developers.cloudflare.com/workers/runtime-apis/request#constructor
-            });
-            if (!response.ok)
-              continue;
-            const plaintextData = await response.text();
-            parsedObj = parseData(plaintextData);
-            await SUB_BUCKET.put(key + "_headers", JSON.stringify(Object.fromEntries(response.headers)));
-            keys.push(key);
-          } else {
-            parsedObj = parseData(url2);
-          }
-          if (/^(ssr?|vmess1?|trojan|vless|hysteria):\/\//.test(url2)) {
-            const newLink = replaceInUri(url2, replacements, false);
-            if (newLink)
-              replacedURIs.push(newLink);
-            continue;
-          } else if ("base64" === parsedObj.format) {
-            const links = parsedObj.data.split(/\r?\n/).filter((link) => link.trim() !== "");
-            const newLinks = [];
-            for (const link of links) {
-              const newLink = replaceInUri(link, replacements, false);
-              if (newLink)
-                newLinks.push(newLink);
-            }
-            const replacedBase64Data = btoa(newLinks.join("\r\n"));
-            if (replacedBase64Data) {
-              await SUB_BUCKET.put(key, replacedBase64Data);
-              keys.push(key);
-              replacedURIs.push(`${host}/${subDir}/${key}`);
-            }
-          } else if ("yaml" === parsedObj.format) {
-            const replacedYAMLData = replaceYAML(parsedObj.data, replacements);
-            if (replacedYAMLData) {
-              await SUB_BUCKET.put(key, replacedYAMLData);
-              keys.push(key);
-              replacedURIs.push(`${host}/${subDir}/${key}`);
-            }
-          }
-        }
       }
-      const newUrl = replacedURIs.join("|");
-      url.searchParams.set("url", newUrl);
-      const modifiedRequest = new Request(backend + url.pathname + url.search, request);
-      const rpResponse = await fetch(modifiedRequest);
-      for (const key of keys) {
-        await SUB_BUCKET.delete(key);
-      }
-      if (rpResponse.status === 200) {
-        const plaintextData = await rpResponse.text();
-        try {
-          const decodedData = urlSafeBase64Decode(plaintextData);
-          const links = decodedData.split(/\r?\n/).filter((link) => link.trim() !== "");
-          const newLinks = [];
-          for (const link of links) {
-            const newLink = replaceInUri(link, replacements, true);
-            if (newLink)
-              newLinks.push(newLink);
-          }
-          const replacedBase64Data = btoa(newLinks.join("\r\n"));
-          let resp = new Response(replacedBase64Data, rpResponse);
-          await kvtest.put("v6",JSON.stringify(resp,null,2));
-          return resp;
-        } catch (base64Error) {
-          const result = plaintextData.replace(
-            new RegExp(Object.keys(replacements).join("|"), "g"),
-            (match) => replacements[match] || match
-          );
-          let resp= new Response(result, rpResponse);
-          await kvtest.put("v7",JSON.stringify(resp,null,2));
-          return resp;
-        }
-      }
-      kvtest.put("v8",JSON.stringify(rpResponse,null,2));
-      return rpResponse;
-    }catch(ex){
-      // kvtest.put("error",ex);
-      console.log("error2");
-      console.log(ex);
     }
+    const newUrl = replacedURIs.join("|");
+    url.searchParams.set("url", newUrl);
+    const modifiedRequest = new Request(backend + url.pathname + url.search, request);
+    const rpResponse = await fetch(modifiedRequest);
+    for (const key of keys) {
+      await SUB_BUCKET.delete(key);
+    }
+    if (rpResponse.status === 200) {
+      const plaintextData = await rpResponse.text();
+      try {
+        const decodedData = urlSafeBase64Decode(plaintextData);
+        const links = decodedData.split(/\r?\n/).filter((link) => link.trim() !== "");
+        const newLinks = [];
+        for (const link of links) {
+          const newLink = replaceInUri(link, replacements, true);
+          if (newLink)
+            newLinks.push(newLink);
+        }
+        const replacedBase64Data = btoa(newLinks.join("\r\n"));
+        return new Response(replacedBase64Data, rpResponse);
+      } catch (base64Error) {
+        const result = plaintextData.replace(
+          new RegExp(Object.keys(replacements).join("|"), "g"),
+          (match) => replacements[match] || match
+        );
+        return new Response(result, rpResponse);
+      }
+    }
+    return rpResponse;
   }
 };
 function replaceInUri(link, replacements, isRecovery) {
