@@ -4,6 +4,7 @@ main = "src/index.js"
 compatibility_date = "2023-05-18"
 compatibility_flags = ["nodejs_compat"]
 
+
 # Automatically place your workloads in an optimal location to minimize latency.
 # If you are running back-end logic in a Worker, running it closer to your back-end infrastructure
 # rather than the end user may result in better performance.
@@ -16,8 +17,9 @@ compatibility_flags = ["nodejs_compat"]
 # - https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 # Note: Use secrets to store sensitive data.
 # - https://developers.cloudflare.com/workers/configuration/secrets/
-# [vars]
-# MY_VARIABLE = "production_value"
+[vars]
+ BACKEND = "https://url.v1.mk"
+# BACKEND = "https://subconvert2.luisimon.com"
 
 # Bind the Workers AI model catalog. Run machine learning models, powered by serverless GPUs, on Cloudflare’s global network
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#workers-ai
@@ -68,9 +70,12 @@ compatibility_flags = ["nodejs_compat"]
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#kv-namespaces
-# [[kv_namespaces]]
-# binding = "MY_KV_NAMESPACE"
-# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ [[kv_namespaces]]
+ binding = "SUB_BUCKET"
+ id = "7c0d3cca0e114491a8ef14c23ab3281d"
+ [[kv_namespaces]]
+ binding ="test"
+ id ="92acdb5357bb44d4b26104a447ff83f0"
 
 # Bind an mTLS certificate. Use to present a client certificate when communicating with another service.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#mtls-certificates
